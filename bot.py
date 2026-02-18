@@ -55,22 +55,28 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 
     return img.resize((target_w, target_h), Image.LANCZOS)
 
-def build_mask_from_template(template_rgba: Image.Image, threshold: int = 30) -> Image.Image:
+def build_mask_from_template(template_rgba: Image.Image, threshold: int = 70) -> Image.Image:
     """
-    نصنع Mask من القالب:
-    - المنطقة السوداء في القالب (المحراب) نخليها "أبيض" في الماسك (مكان الصورة)
-    - الباقي "أسود"
-    threshold يتحكم شحال لازم يكون اللون داكن باش يتحسب ضمن الماسك
+    Mask قوي: نحدد منطقة الإدخال على أساس RGB مباشرة:
+    أي بكسل قريب للسواد (R,G,B <= threshold) => 255 في الماسك
     """
-    gray = template_rgba.convert("L")
+    rgb = template_rgba.convert("RGB")
+    pixels = list(rgb.getdata())
 
-    # الأسود (قريب من 0) => 255 في الماسك
-    mask = gray.point(lambda p: 255 if p <= threshold else 0)
+    mask_data = []
+    for (r, g, b) in pixels:
+        if r <= threshold and g <= threshold and b <= threshold:
+            mask_data.append(255)
+        else:
+            mask_data.append(0)
 
-    # نعطي نعومة للحواف باش يجي دمج نظيف
+    mask = Image.new("L", rgb.size)
+    mask.putdata(mask_data)
+
+    # نعومة خفيفة للحواف
     mask = mask.filter(ImageFilter.GaussianBlur(radius=1.2))
     return mask
-
+    
 def compose_with_template(user_img_path: str) -> str:
     """
     يركّب صورة المستخدم داخل الماسك ثم يرمي القالب فوقها ويخرج JPG نهائي.
@@ -159,3 +165,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
