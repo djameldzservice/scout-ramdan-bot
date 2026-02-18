@@ -55,53 +55,58 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 
     return img.resize((target_w, target_h), Image.LANCZOS)
 
-def build_mask_from_template(template_rgba: Image.Image, threshold: int = 70) -> Image.Image:
+def build_mask_from_template(template_rgba: Image.Image, threshold: int = 25) -> Image.Image:
     """
-    Mask قوي: نحدد منطقة الإدخال على أساس RGB مباشرة:
-    أي بكسل قريب للسواد (R,G,B <= threshold) => 255 في الماسك
+    نخرج Mask تاع المنطقة السوداء (المحراب).
+    أي بكسل قريب للسواد (R,G,B <= threshold) يتحسب ضمن الماسك.
     """
     rgb = template_rgba.convert("RGB")
-    pixels = list(rgb.getdata())
+    w, h = rgb.size
 
-    mask_data = []
-    for (r, g, b) in pixels:
+    mask = Image.new("L", (w, h), 0)
+    src = list(rgb.getdata())
+    out = []
+
+    for (r, g, b) in src:
         if r <= threshold and g <= threshold and b <= threshold:
-            mask_data.append(255)
+            out.append(255)
         else:
-            mask_data.append(0)
+            out.append(0)
 
-    mask = Image.new("L", rgb.size)
-    mask.putdata(mask_data)
-
+    mask.putdata(out)
     # نعومة خفيفة للحواف
     mask = mask.filter(ImageFilter.GaussianBlur(radius=1.2))
     return mask
     
 def compose_with_template(user_img_path: str) -> str:
     """
-    يركّب صورة المستخدم داخل الماسك ثم يرمي القالب فوقها ويخرج JPG نهائي.
+    1) نقصّ صورة المستخدم قص ذكي على مقاس القالب
+    2) نصنع hole في القالب في مكان الأسود (يولي شفاف)
+    3) نركّب القالب فوق صورة المستخدم ونخرج JPG
     """
     template = Image.open(TEMPLATE_PATH).convert("RGBA")
     tw, th = template.size
 
-    # صورة المستخدم
+    # صورة المستخدم: قص ذكي (بالطول/بالعرض) بدون تشويه
     user = Image.open(user_img_path).convert("RGB")
     user = center_crop_to_aspect(user, tw, th).convert("RGBA")
 
-    # الماسك
-    mask = build_mask_from_template(template, threshold=30)
+    # ماسك المنطقة السوداء
+    hole_mask = build_mask_from_template(template, threshold=25)
 
-    # قاعدة شفافة
-    base = Image.new("RGBA", (tw, th), (0, 0, 0, 0))
-    base.paste(user, (0, 0), mask=mask)
+    # نخلي القالب "مخروم" (شفاف) في المنطقة السوداء
+    r, g, b, a = template.split()
+    zero = Image.new("L", template.size, 0)
+    new_alpha = Image.composite(zero, a, hole_mask)  # أين الماسك أبيض => alpha=0
+    template_hole = Image.merge("RGBA", (r, g, b, new_alpha))
 
-    # القالب فوق الكل
-    final = Image.alpha_composite(base, template).convert("RGB")
+    # دمج نهائي: صورة المستخدم تحت + القالب فوق
+    final = Image.alpha_composite(user, template_hole).convert("RGB")
 
     out_path = user_img_path.replace("_in.jpg", "_out.jpg")
     final.save(out_path, "JPEG", quality=92, optimize=True)
     return out_path
-
+    
 # ---------- Telegram handlers ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(WELCOME_TEXT)
@@ -165,4 +170,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
