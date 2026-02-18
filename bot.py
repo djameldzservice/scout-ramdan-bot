@@ -2,7 +2,14 @@ import os
 from PIL import Image
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
+import asyncio
 
+# Fix for Python 3.14+: ensure there's an event loop in main thread
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    
 TOKEN = os.environ.get("BOT_TOKEN")
 TEMPLATE_PATH = "scout_ramdan.png"
 
@@ -32,4 +39,5 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
 app.run_polling()
