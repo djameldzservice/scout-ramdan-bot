@@ -2,6 +2,7 @@ import os
 import re
 import asyncio
 from PIL import Image, ImageFilter, ImageDraw, ImageFont
+
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import (
@@ -12,11 +13,12 @@ from telegram.ext import (
     filters,
 )
 
-# Event loop fix (works on newer Python)
+# --- event loop fix ---
 try:
     asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
+# ----------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
@@ -24,20 +26,21 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 TEMPLATE_PATH = "scout_ramdan.png"
 FONT_PATH = "HacenBeirut.ttf"
 
-# ✅ صندوق الاسم داخل الجزء البنفسجي (على خطك الأحمر تقريبًا)
+# ✅ الصندوق اللي عطيتو (مضبوط)
 # (x1, y1, x2, y2)
-NAME_BOX = (170, 1025, 910, 1165)
+NAME_BOX = (333, 851, 1146, 952)
 
-MAX_FONT = 120
-MIN_FONT = 20
-NAME_PADDING = 34  # مسافة داخلية من الحواف
+# إعدادات الخط
+MAX_FONT = 110
+MIN_FONT = 18
+NAME_PADDING = 40  # مسافة داخلية من الجوانب
 
 WELCOME_TEXT = (
     "✨ أهلاً بك!\n\n"
     "📌 هذا البوت يجمع صوركم لعمل تصميم رمضاني خاص بالكشافة.\n"
     "✅ بعد إرسال *اسمك* و*صورتك* سيتم إنشاء الصورة ونشرها على مستوى صفحة:\n"
     "«صدى الكشافة» التابعة للقيادة العامة لزيادة التفاعل.\n\n"
-    "✍️ اكتب اسمك الآن (إجباري) ثم ابعث الصورة."
+    "✍️ اكتب اسمك ولقبك الآن (إجباري)."
 )
 
 ASK_NAME_TEXT = "✍️ اكتب اسمك ولقبك من فضلك (إجباري):"
@@ -52,22 +55,31 @@ BAD_NAME_TEXT = "❌ الاسم قصير بزاف. اكتب اسم واضح (ع�
 ERROR_TEXT = "❌ صرا خطأ أثناء المعالجة. جرّب من جديد بعد شوية."
 ADMIN_MISSING_TEXT = "⚠️ ADMIN_CHAT_ID ناقص. لازم تحطّو في Environment Variables."
 
-# ---------- Text helpers ----------
+# ---------------- Text helpers ----------------
 def clean_name(name: str) -> str:
     name = (name or "").strip()
-    # حذف علامات اتجاه خفية قد تقلب النص
-    name = name.replace("\u200f", "").replace("\u200e", "").replace("\u202a", "").replace("\u202b", "").replace("\u202c", "")
+    # حذف علامات اتجاه مخفية
+    name = (
+        name.replace("\u200f", "")
+            .replace("\u200e", "")
+            .replace("\u202a", "")
+            .replace("\u202b", "")
+            .replace("\u202c", "")
+    )
     name = re.sub(r"\s+", " ", name)
     return name
 
 def shape_ar(text: str) -> str:
     import arabic_reshaper
     from bidi.algorithm import get_display
-    text = (text or "").strip()
-    return get_display(arabic_reshaper.reshape(text))
 
-# ---------- Image helpers ----------
+    text = (text or "").strip()
+    reshaped = arabic_reshaper.reshape(text)
+    return get_display(reshaped)
+
+# ---------------- Image helpers ----------------
 def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
+    """Smart center-crop to match aspect ratio then resize (no distortion)."""
     iw, ih = img.size
     target_ratio = target_w / target_h
     img_ratio = iw / ih
@@ -84,6 +96,9 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
     return img.resize((target_w, target_h), Image.LANCZOS)
 
 def build_black_region_mask(template_rgba: Image.Image, threshold: int = 25) -> Image.Image:
+    """
+    Mask للمنطقة السوداء (مكان الصورة): الأسود => 255 في الماسك.
+    """
     rgb = template_rgba.convert("RGB")
     w, h = rgb.size
     src = rgb.getdata()
@@ -97,14 +112,15 @@ def build_black_region_mask(template_rgba: Image.Image, threshold: int = 25) -> 
     return mask.filter(ImageFilter.GaussianBlur(radius=1.2))
 
 def punch_hole_in_template(template_rgba: Image.Image, hole_mask: Image.Image) -> Image.Image:
+    """Make black region transparent (hole) so user photo appears behind it."""
     r, g, b, a = template_rgba.split()
     zero = Image.new("L", template_rgba.size, 0)
     new_alpha = Image.composite(zero, a, hole_mask)  # mask=255 => alpha=0
     return Image.merge("RGBA", (r, g, b, new_alpha))
 
 def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int) -> ImageFont.FreeTypeFont:
-    usable_w = max(10, box_w - (2 * NAME_PADDING))
-    usable_h = max(10, box_h - (2 * NAME_PADDING))
+    usable_w = max(10, box_w - 2 * NAME_PADDING)
+    usable_h = max(10, box_h - 2 * NAME_PADDING)
 
     for size in range(MAX_FONT, MIN_FONT - 1, -1):
         font = ImageFont.truetype(FONT_PATH, size)
@@ -117,6 +133,13 @@ def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: i
     return ImageFont.truetype(FONT_PATH, MIN_FONT)
 
 def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
+    """
+    Draw name inside NAME_BOX:
+    - Single line only
+    - Auto shrink
+    - True centering (handles negative bbox offsets)
+    - Padding from edges
+    """
     img = img_rgb.convert("RGB")
     draw = ImageDraw.Draw(img)
 
@@ -124,15 +147,12 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     box_w = x2 - x1
     box_h = y2 - y1
 
-    text = shape_ar(name)
+    name_text = shape_ar(name)
 
-    try:
-        font = fit_font_one_line(draw, text, box_w, box_h)
-    except Exception:
-        font = ImageFont.load_default()
+    font = fit_font_one_line(draw, name_text, box_w, box_h)
 
-    # ✅ تصحيح التمركز مع الخطوط العربية (bbox offsets)
-    l, t, r, b = draw.textbbox((0, 0), text, font=font)
+    # bbox may have negative left/top for Arabic fonts -> correct centering
+    l, t, r, b = draw.textbbox((0, 0), name_text, font=font)
     tw = r - l
     th = b - t
 
@@ -145,8 +165,10 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     x = int(cx - (tw / 2) - l)
     y = int(cy - (th / 2) - t)
 
-    draw.text((x + 2, y + 2), text, font=font, fill=(0, 0, 0))
-    draw.text((x, y), text, font=font, fill=(255, 255, 255))
+    # shadow + white
+    draw.text((x + 2, y + 2), name_text, font=font, fill=(0, 0, 0))
+    draw.text((x, y), name_text, font=font, fill=(255, 255, 255))
+
     return img
 
 def compose_final(user_img_path: str, name: str) -> str:
@@ -166,7 +188,7 @@ def compose_final(user_img_path: str, name: str) -> str:
     final.save(out_path, "JPEG", quality=92, optimize=True)
     return out_path
 
-# ---------- Bot handlers ----------
+# ---------------- Bot handlers ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(WELCOME_TEXT)
@@ -203,12 +225,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_id = update.message.message_id
         in_path = os.path.join("tmp", f"{msg_id}_in.jpg")
 
+        # download image
         photo = update.message.photo[-1]
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(in_path)
 
+        # compose
         out_path = compose_final(in_path, name)
 
+        # send to admin ONLY
         if not ADMIN_CHAT_ID:
             await update.message.reply_text(ADMIN_MISSING_TEXT)
         else:
@@ -225,8 +250,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(out_path, "rb") as f:
                 await context.bot.send_photo(chat_id=int(ADMIN_CHAT_ID), photo=f, caption=caption)
 
+        # confirm to user (NO image returned)
         await update.message.reply_text(RECEIVED_TEXT)
 
+        # cleanup
         try:
             os.remove(in_path)
             os.remove(out_path)
@@ -247,7 +274,7 @@ def main():
         raise SystemExit(f"القالب ناقص: {TEMPLATE_PATH}")
 
     if not os.path.exists(FONT_PATH):
-        print(f"WARNING: Font not found: {FONT_PATH} (Arabic may not render correctly)")
+        raise SystemExit(f"الخط ناقص: {FONT_PATH}")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
