@@ -14,7 +14,7 @@ from telegram.ext import (
 
 # --- Fix for Python 3.14+ event loop (Render sometimes uses newer Python) ---
 try:
-    asyncio.get_event_loop()
+    asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 # --------------------------------------------------------------------------
@@ -280,6 +280,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
