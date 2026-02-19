@@ -135,7 +135,7 @@ def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: i
 
 def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     """
-    كتابة الاسم سطر واحد فقط + Auto shrink + Padding + Center.
+    كتابة الاسم سطر واحد فقط + Auto shrink + Center صحيح حتى مع الخط العربي.
     """
     img = img_rgb.convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -149,19 +149,24 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     try:
         font = fit_font_one_line(draw, text, box_w, box_h)
     except Exception:
-        # fallback إذا الخط غير موجود
         font = ImageFont.load_default()
 
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw = bbox[2] - bbox[0]
-    th = bbox[3] - bbox[1]
+    # bbox قد يكون فيه left/top سالبين مع الخطوط العربية، لازم نصححو
+    l, t, r, b = draw.textbbox((0, 0), text, font=font)
+    tw = r - l
+    th = b - t
 
+    # مساحة الاستعمال داخل الصندوق (بعد padding)
     usable_w = box_w - 2 * NAME_PADDING
     usable_h = box_h - 2 * NAME_PADDING
 
-    # تمركز داخل الصندوق مع padding
-    x = x1 + NAME_PADDING + ((usable_w - tw) // 2)
-    y = y1 + NAME_PADDING + ((usable_h - th) // 2)
+    # مركز الصندوق
+    cx = x1 + NAME_PADDING + (usable_w // 2)
+    cy = y1 + NAME_PADDING + (usable_h // 2)
+
+    # حساب مكان الرسم مع تصحيح bbox offsets (l,t)
+    x = int(cx - (tw / 2) - l)
+    y = int(cy - (th / 2) - t)
 
     # ظل خفيف + أبيض
     draw.text((x + 2, y + 2), text, font=font, fill=(0, 0, 0))
@@ -287,3 +292,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
