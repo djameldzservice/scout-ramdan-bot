@@ -13,27 +13,28 @@ from telegram.ext import (
     filters,
 )
 
-# --- event loop fix ---
+# --------- Fix event loop for newer Python ----------
 try:
     asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
-# ----------------------
+# ----------------------------------------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 
-TEMPLATE_PATH = "scout_ramdan.png"
-FONT_PATH = "HacenBeirut.ttf"
+TEMPLATE_PATH = "scout_ramdan.png"   # القالب 300x500
+FONT_PATH = "HacenBeirut.ttf"        # الخط
 
-# ✅ الصندوق اللي عطيتو (مضبوط)
-# (x1, y1, x2, y2)
-NAME_BOX = (333, 851, 1146, 952)
+# ✅ مكان الاسم كنِسَب من القالب 300x500 (كيما الخط الأحمر)
+# (x1%, y1%, x2%, y2%)  => عدّل y فقط إذا حبيت يطلع/يهبط
+NAME_BOX_PCT = (0.10, 0.505, 0.90, 0.585)
 
-# إعدادات الخط
-MAX_FONT = 110
-MIN_FONT = 18
-NAME_PADDING = 40  # مسافة داخلية من الجوانب
+# مسافة داخلية من الحواف داخل صندوق الاسم
+NAME_PADDING = 16
+
+MAX_FONT = 64
+MIN_FONT = 14
 
 WELCOME_TEXT = (
     "✨ أهلاً بك!\n\n"
@@ -55,6 +56,7 @@ BAD_NAME_TEXT = "❌ الاسم قصير بزاف. اكتب اسم واضح (ع�
 ERROR_TEXT = "❌ صرا خطأ أثناء المعالجة. جرّب من جديد بعد شوية."
 ADMIN_MISSING_TEXT = "⚠️ ADMIN_CHAT_ID ناقص. لازم تحطّو في Environment Variables."
 
+
 # ---------------- Text helpers ----------------
 def clean_name(name: str) -> str:
     name = (name or "").strip()
@@ -69,6 +71,7 @@ def clean_name(name: str) -> str:
     name = re.sub(r"\s+", " ", name)
     return name
 
+
 def shape_ar(text: str) -> str:
     import arabic_reshaper
     from bidi.algorithm import get_display
@@ -76,6 +79,13 @@ def shape_ar(text: str) -> str:
     text = (text or "").strip()
     reshaped = arabic_reshaper.reshape(text)
     return get_display(reshaped)
+
+
+# ---------------- Box helper ----------------
+def box_from_pct(w: int, h: int, pct_box):
+    x1p, y1p, x2p, y2p = pct_box
+    return (int(w * x1p), int(h * y1p), int(w * x2p), int(h * y2p))
+
 
 # ---------------- Image helpers ----------------
 def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
@@ -95,11 +105,12 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
 
     return img.resize((target_w, target_h), Image.LANCZOS)
 
-def build_black_region_mask(template_rgba: Image.Image, threshold: int = 25) -> Image.Image:
+
+def build_black_region_mask(template_rgb: Image.Image, threshold: int = 25) -> Image.Image:
     """
     Mask للمنطقة السوداء (مكان الصورة): الأسود => 255 في الماسك.
     """
-    rgb = template_rgba.convert("RGB")
+    rgb = template_rgb.convert("RGB")
     w, h = rgb.size
     src = rgb.getdata()
 
@@ -109,7 +120,8 @@ def build_black_region_mask(template_rgba: Image.Image, threshold: int = 25) -> 
 
     mask = Image.new("L", (w, h))
     mask.putdata(out)
-    return mask.filter(ImageFilter.GaussianBlur(radius=1.2))
+    return mask.filter(ImageFilter.GaussianBlur(radius=1.0))
+
 
 def punch_hole_in_template(template_rgba: Image.Image, hole_mask: Image.Image) -> Image.Image:
     """Make black region transparent (hole) so user photo appears behind it."""
@@ -117,6 +129,7 @@ def punch_hole_in_template(template_rgba: Image.Image, hole_mask: Image.Image) -
     zero = Image.new("L", template_rgba.size, 0)
     new_alpha = Image.composite(zero, a, hole_mask)  # mask=255 => alpha=0
     return Image.merge("RGBA", (r, g, b, new_alpha))
+
 
 def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int) -> ImageFont.FreeTypeFont:
     usable_w = max(10, box_w - 2 * NAME_PADDING)
@@ -132,26 +145,25 @@ def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: i
 
     return ImageFont.truetype(FONT_PATH, MIN_FONT)
 
+
 def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     """
-    Draw name inside NAME_BOX:
-    - Single line only
+    - سطر واحد فقط
     - Auto shrink
-    - True centering (handles negative bbox offsets)
-    - Padding from edges
+    - Center صحيح (حتى لو bbox سلبي مع العربية)
+    - بدون stroke
     """
     img = img_rgb.convert("RGB")
     draw = ImageDraw.Draw(img)
 
-    x1, y1, x2, y2 = NAME_BOX
+    w, h = img.size
+    x1, y1, x2, y2 = box_from_pct(w, h, NAME_BOX_PCT)
     box_w = x2 - x1
     box_h = y2 - y1
 
     name_text = shape_ar(name)
-
     font = fit_font_one_line(draw, name_text, box_w, box_h)
 
-    # bbox may have negative left/top for Arabic fonts -> correct centering
     l, t, r, b = draw.textbbox((0, 0), name_text, font=font)
     tw = r - l
     th = b - t
@@ -165,15 +177,16 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     x = int(cx - (tw / 2) - l)
     y = int(cy - (th / 2) - t)
 
-    # shadow + white
+    # ظل خفيف + أبيض (بدون stroke)
     draw.text((x + 2, y + 2), name_text, font=font, fill=(0, 0, 0))
     draw.text((x, y), name_text, font=font, fill=(255, 255, 255))
 
     return img
 
+
 def compose_final(user_img_path: str, name: str) -> str:
     template = Image.open(TEMPLATE_PATH).convert("RGBA")
-    tw, th = template.size
+    tw, th = template.size  # لازم تكون 300x500
 
     user = Image.open(user_img_path).convert("RGB")
     user = center_crop_to_aspect(user, tw, th).convert("RGBA")
@@ -188,14 +201,17 @@ def compose_final(user_img_path: str, name: str) -> str:
     final.save(out_path, "JPEG", quality=92, optimize=True)
     return out_path
 
+
 # ---------------- Bot handlers ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text(WELCOME_TEXT)
     await update.message.reply_text(ASK_NAME_TEXT)
 
+
 async def myid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🆔 Chat ID: {update.effective_chat.id}")
+
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (update.message.text or "").strip()
@@ -209,6 +225,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data["name"] = name
     await update.message.reply_text(f"✅ تشرفنا يا {name}!\n{ASK_PHOTO_TEXT}")
+
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = context.user_data.get("name")
@@ -225,15 +242,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_id = update.message.message_id
         in_path = os.path.join("tmp", f"{msg_id}_in.jpg")
 
-        # download image
         photo = update.message.photo[-1]
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(in_path)
 
-        # compose
         out_path = compose_final(in_path, name)
 
-        # send to admin ONLY
         if not ADMIN_CHAT_ID:
             await update.message.reply_text(ADMIN_MISSING_TEXT)
         else:
@@ -250,10 +264,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(out_path, "rb") as f:
                 await context.bot.send_photo(chat_id=int(ADMIN_CHAT_ID), photo=f, caption=caption)
 
-        # confirm to user (NO image returned)
         await update.message.reply_text(RECEIVED_TEXT)
 
-        # cleanup
+        # تنظيف الملفات
         try:
             os.remove(in_path)
             os.remove(out_path)
@@ -263,18 +276,23 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         await update.message.reply_text(ERROR_TEXT)
 
+
 async def handle_other(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📌 اكتب اسمك ثم ابعث صورة فقط ✅")
+
 
 def main():
     if not BOT_TOKEN:
         raise SystemExit("BOT_TOKEN ناقص. ضيفه في Environment Variables.")
-
     if not os.path.exists(TEMPLATE_PATH):
         raise SystemExit(f"القالب ناقص: {TEMPLATE_PATH}")
-
     if not os.path.exists(FONT_PATH):
         raise SystemExit(f"الخط ناقص: {FONT_PATH}")
+
+    # تأكيد المقاس (300x500)
+    w, h = Image.open(TEMPLATE_PATH).size
+    if (w, h) != (300, 500):
+        print(f"WARNING: Template size is {w}x{h}, expected 300x500. (Still works with % box)")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -285,7 +303,9 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(~filters.PHOTO & ~filters.TEXT, handle_other))
 
+    # drop_pending_updates يمنع Conflict إذا كان عندك instance قديم
     app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == "__main__":
     main()
