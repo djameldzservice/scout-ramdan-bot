@@ -27,7 +27,7 @@ FONT_PATH = "HacenBeirut.ttf"
 
 # صندوق الاسم (وسط + فوق "يتمنى لكم")
 # (x1, y1, x2, y2)
-NAME_BOX = (190, 1175, 890, 1315)
+NAME_BOX = (170, 1170, 910, 1315)
 
 MAX_FONT = 120
 MIN_FONT = 20
@@ -292,4 +292,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
