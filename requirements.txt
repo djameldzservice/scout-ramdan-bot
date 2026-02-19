@@ -1,4 +1,4 @@
 python-telegram-bot==21.6
-Pillow
-arabic-reshaper
-python-bidi
+Pillow==12.1.1
+arabic-reshaper==3.0.0
+python-bidi==0.4.2
