@@ -12,12 +12,12 @@ from telegram.ext import (
     filters,
 )
 
-# --- Fix for Python 3.14+ event loop (Render sometimes uses newer Python) ---
+# --- Better event loop fix (works on newer Python) ---
 try:
     asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
-# --------------------------------------------------------------------------
+# ----------------------------------------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
@@ -25,12 +25,13 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 TEMPLATE_PATH = "scout_ramdan.png"
 FONT_PATH = "HacenBeirut.ttf"
 
-# صندوق الاسم (فوق "يتمنى لكم")
+# صندوق الاسم (وسط + فوق "يتمنى لكم")
 # (x1, y1, x2, y2)
-NAME_BOX = (140, 1200, 940, 1310)
+NAME_BOX = (190, 1175, 890, 1315)
 
 MAX_FONT = 120
 MIN_FONT = 20
+NAME_PADDING = 28  # مسافة داخلية من الحواف
 
 WELCOME_TEXT = (
     "✨ أهلاً بك!\n\n"
@@ -50,26 +51,25 @@ RECEIVED_TEXT = (
 NEED_NAME_FIRST = "📌 لازم تكتب اسمك أولاً. اكتب اسمك الآن ✍️"
 BAD_NAME_TEXT = "❌ الاسم قصير بزاف. اكتب اسم واضح (على الأقل 3 حروف)."
 ERROR_TEXT = "❌ صرا خطأ أثناء المعالجة. جرّب من جديد بعد شوية."
-ADMIN_MISSING_TEXT = "⚠️ الإدارة مازال ما حدّدتش مكان الاستلام (ADMIN_CHAT_ID)."
+ADMIN_MISSING_TEXT = "⚠️ ADMIN_CHAT_ID ناقص. لازم تحطّو في Environment Variables."
 
 # ---------- Text helpers ----------
 def clean_name(name: str) -> str:
-    name = name.strip()
+    name = (name or "").strip()
+    # نحذف علامات اتجاه مخفية ممكن تقلب النص
+    name = name.replace("\u200f", "").replace("\u200e", "").replace("\u202a", "").replace("\u202b", "").replace("\u202c", "")
     name = re.sub(r"\s+", " ", name)
     return name
 
 def shape_ar(text: str) -> str:
     """
-    Fix Arabic for Pillow:
-    - reshape to connect letters
-    - bidi to convert to visual order for LTR renderers (Pillow)
+    Arabic shaping + bidi (fix RTL in Pillow).
     """
     import arabic_reshaper
     from bidi.algorithm import get_display
 
     text = (text or "").strip()
     reshaped = arabic_reshaper.reshape(text)
-    # IMPORTANT: no RTL mark, no base_dir هنا
     return get_display(reshaped)
 
 # ---------- Image helpers ----------
@@ -120,19 +120,22 @@ def punch_hole_in_template(template_rgba: Image.Image, hole_mask: Image.Image) -
     return Image.merge("RGBA", (r, g, b, new_alpha))
 
 def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int) -> ImageFont.FreeTypeFont:
-    """Pick the largest font size that fits in the box (single line only)."""
+    """Pick the largest font size that fits in the box (single line only) with padding."""
+    usable_w = max(10, box_w - (2 * NAME_PADDING))
+    usable_h = max(10, box_h - (2 * NAME_PADDING))
+
     for size in range(MAX_FONT, MIN_FONT - 1, -1):
         font = ImageFont.truetype(FONT_PATH, size)
         bbox = draw.textbbox((0, 0), text, font=font)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
-        if tw <= box_w and th <= box_h:
+        if tw <= usable_w and th <= usable_h:
             return font
     return ImageFont.truetype(FONT_PATH, MIN_FONT)
 
 def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     """
-    كتابة الاسم سطر واحد فقط + Auto shrink.
+    كتابة الاسم سطر واحد فقط + Auto shrink + Padding + Center.
     """
     img = img_rgb.convert("RGB")
     draw = ImageDraw.Draw(img)
@@ -153,9 +156,12 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     tw = bbox[2] - bbox[0]
     th = bbox[3] - bbox[1]
 
-    # تمركز داخل الصندوق
-    x = x1 + (box_w - tw) // 2
-    y = y1 + (box_h - th) // 2
+    usable_w = box_w - 2 * NAME_PADDING
+    usable_h = box_h - 2 * NAME_PADDING
+
+    # تمركز داخل الصندوق مع padding
+    x = x1 + NAME_PADDING + ((usable_w - tw) // 2)
+    y = y1 + NAME_PADDING + ((usable_h - th) // 2)
 
     # ظل خفيف + أبيض
     draw.text((x + 2, y + 2), text, font=font, fill=(0, 0, 0))
@@ -261,10 +267,11 @@ async def handle_other(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     if not BOT_TOKEN:
         raise SystemExit("BOT_TOKEN ناقص. ضيفه في Environment Variables (Railway/Render).")
+
     if not os.path.exists(TEMPLATE_PATH):
         raise SystemExit(f"القالب ناقص: {TEMPLATE_PATH}")
+
     if not os.path.exists(FONT_PATH):
-        # نخليه يمشي لكن ننبه في اللوغ
         print(f"WARNING: Font not found: {FONT_PATH} (Arabic may not render correctly)")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
@@ -280,7 +287,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
