@@ -59,11 +59,26 @@ def clean_name(name: str) -> str:
     return name
 
 def shape_ar(text: str) -> str:
-    """Arabic shaping + RTL display."""
+    """
+    Arabic shaping + RTL bidi fix for Pillow.
+    """
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
-        return get_display(arabic_reshaper.reshape(text))
+
+        text = text.strip()
+
+        reshaped = arabic_reshaper.reshape(text)
+
+        # حاول نفرض الاتجاه RTL صراحة (بعض نسخ python-bidi تدعم base_dir)
+        try:
+            visual = get_display(reshaped, base_dir="R")
+        except TypeError:
+            visual = get_display(reshaped)
+
+        # إضافة علامة RTL باش Pillow ما يقلبش الكلمات
+        return "\u200F" + visual
+
     except Exception:
         return text
 
@@ -275,3 +290,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
