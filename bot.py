@@ -60,27 +60,17 @@ def clean_name(name: str) -> str:
 
 def shape_ar(text: str) -> str:
     """
-    Arabic shaping + RTL bidi fix for Pillow.
+    Fix Arabic for Pillow:
+    - reshape to connect letters
+    - bidi to convert to visual order for LTR renderers (Pillow)
     """
-    try:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
+    import arabic_reshaper
+    from bidi.algorithm import get_display
 
-        text = text.strip()
-
-        reshaped = arabic_reshaper.reshape(text)
-
-        # حاول نفرض الاتجاه RTL صراحة (بعض نسخ python-bidi تدعم base_dir)
-        try:
-            visual = get_display(reshaped, base_dir="R")
-        except TypeError:
-            visual = get_display(reshaped)
-
-        # إضافة علامة RTL باش Pillow ما يقلبش الكلمات
-        return "\u200F" + visual
-
-    except Exception:
-        return text
+    text = (text or "").strip()
+    reshaped = arabic_reshaper.reshape(text)
+    # IMPORTANT: no RTL mark, no base_dir هنا
+    return get_display(reshaped)
 
 # ---------- Image helpers ----------
 def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
@@ -290,4 +280,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
