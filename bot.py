@@ -12,12 +12,11 @@ from telegram.ext import (
     filters,
 )
 
-# --- Better event loop fix (works on newer Python) ---
+# Event loop fix (works on newer Python)
 try:
     asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
-# ----------------------------------------------------
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
@@ -25,13 +24,13 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID", "").strip()
 TEMPLATE_PATH = "scout_ramdan.png"
 FONT_PATH = "HacenBeirut.ttf"
 
-# صندوق الاسم (وسط + فوق "يتمنى لكم")
+# ✅ صندوق الاسم داخل الجزء البنفسجي (على خطك الأحمر تقريبًا)
 # (x1, y1, x2, y2)
-NAME_BOX = (170, 1170, 910, 1315)
+NAME_BOX = (170, 1025, 910, 1165)
 
 MAX_FONT = 120
 MIN_FONT = 20
-NAME_PADDING = 28  # مسافة داخلية من الحواف
+NAME_PADDING = 34  # مسافة داخلية من الحواف
 
 WELCOME_TEXT = (
     "✨ أهلاً بك!\n\n"
@@ -56,25 +55,19 @@ ADMIN_MISSING_TEXT = "⚠️ ADMIN_CHAT_ID ناقص. لازم تحطّو في En
 # ---------- Text helpers ----------
 def clean_name(name: str) -> str:
     name = (name or "").strip()
-    # نحذف علامات اتجاه مخفية ممكن تقلب النص
+    # حذف علامات اتجاه خفية قد تقلب النص
     name = name.replace("\u200f", "").replace("\u200e", "").replace("\u202a", "").replace("\u202b", "").replace("\u202c", "")
     name = re.sub(r"\s+", " ", name)
     return name
 
 def shape_ar(text: str) -> str:
-    """
-    Arabic shaping + bidi (fix RTL in Pillow).
-    """
     import arabic_reshaper
     from bidi.algorithm import get_display
-
     text = (text or "").strip()
-    reshaped = arabic_reshaper.reshape(text)
-    return get_display(reshaped)
+    return get_display(arabic_reshaper.reshape(text))
 
 # ---------- Image helpers ----------
 def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    """Smart center-crop to match aspect ratio, then resize (no distortion)."""
     iw, ih = img.size
     target_ratio = target_w / target_h
     img_ratio = iw / ih
@@ -91,52 +84,39 @@ def center_crop_to_aspect(img: Image.Image, target_w: int, target_h: int) -> Ima
     return img.resize((target_w, target_h), Image.LANCZOS)
 
 def build_black_region_mask(template_rgba: Image.Image, threshold: int = 25) -> Image.Image:
-    """
-    Mask للمنطقة السوداء (مكان الصورة): الأسود => 255 في الماسك.
-    """
     rgb = template_rgba.convert("RGB")
     w, h = rgb.size
     src = rgb.getdata()
 
     out = []
     for (r, g, b) in src:
-        if r <= threshold and g <= threshold and b <= threshold:
-            out.append(255)
-        else:
-            out.append(0)
+        out.append(255 if (r <= threshold and g <= threshold and b <= threshold) else 0)
 
     mask = Image.new("L", (w, h))
     mask.putdata(out)
-    mask = mask.filter(ImageFilter.GaussianBlur(radius=1.2))
-    return mask
+    return mask.filter(ImageFilter.GaussianBlur(radius=1.2))
 
 def punch_hole_in_template(template_rgba: Image.Image, hole_mask: Image.Image) -> Image.Image:
-    """
-    نحول المنطقة السوداء إلى شفافة (Hole) في القالب.
-    """
     r, g, b, a = template_rgba.split()
     zero = Image.new("L", template_rgba.size, 0)
     new_alpha = Image.composite(zero, a, hole_mask)  # mask=255 => alpha=0
     return Image.merge("RGBA", (r, g, b, new_alpha))
 
 def fit_font_one_line(draw: ImageDraw.ImageDraw, text: str, box_w: int, box_h: int) -> ImageFont.FreeTypeFont:
-    """Pick the largest font size that fits in the box (single line only) with padding."""
     usable_w = max(10, box_w - (2 * NAME_PADDING))
     usable_h = max(10, box_h - (2 * NAME_PADDING))
 
     for size in range(MAX_FONT, MIN_FONT - 1, -1):
         font = ImageFont.truetype(FONT_PATH, size)
-        bbox = draw.textbbox((0, 0), text, font=font)
-        tw = bbox[2] - bbox[0]
-        th = bbox[3] - bbox[1]
+        l, t, r, b = draw.textbbox((0, 0), text, font=font)
+        tw = r - l
+        th = b - t
         if tw <= usable_w and th <= usable_h:
             return font
+
     return ImageFont.truetype(FONT_PATH, MIN_FONT)
 
 def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
-    """
-    كتابة الاسم سطر واحد فقط + Auto shrink + Center صحيح حتى مع الخط العربي.
-    """
     img = img_rgb.convert("RGB")
     draw = ImageDraw.Draw(img)
 
@@ -151,27 +131,22 @@ def draw_name_one_line(img_rgb: Image.Image, name: str) -> Image.Image:
     except Exception:
         font = ImageFont.load_default()
 
-    # bbox قد يكون فيه left/top سالبين مع الخطوط العربية، لازم نصححو
+    # ✅ تصحيح التمركز مع الخطوط العربية (bbox offsets)
     l, t, r, b = draw.textbbox((0, 0), text, font=font)
     tw = r - l
     th = b - t
 
-    # مساحة الاستعمال داخل الصندوق (بعد padding)
     usable_w = box_w - 2 * NAME_PADDING
     usable_h = box_h - 2 * NAME_PADDING
 
-    # مركز الصندوق
-    cx = x1 + NAME_PADDING + (usable_w // 2)
-    cy = y1 + NAME_PADDING + (usable_h // 2)
+    cx = x1 + NAME_PADDING + (usable_w / 2)
+    cy = y1 + NAME_PADDING + (usable_h / 2)
 
-    # حساب مكان الرسم مع تصحيح bbox offsets (l,t)
     x = int(cx - (tw / 2) - l)
     y = int(cy - (th / 2) - t)
 
-    # ظل خفيف + أبيض
     draw.text((x + 2, y + 2), text, font=font, fill=(0, 0, 0))
     draw.text((x, y), text, font=font, fill=(255, 255, 255))
-
     return img
 
 def compose_final(user_img_path: str, name: str) -> str:
@@ -228,15 +203,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg_id = update.message.message_id
         in_path = os.path.join("tmp", f"{msg_id}_in.jpg")
 
-        # Download user image
         photo = update.message.photo[-1]
         tg_file = await photo.get_file()
         await tg_file.download_to_drive(in_path)
 
-        # Compose final
         out_path = compose_final(in_path, name)
 
-        # Send to admin ONLY
         if not ADMIN_CHAT_ID:
             await update.message.reply_text(ADMIN_MISSING_TEXT)
         else:
@@ -253,10 +225,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             with open(out_path, "rb") as f:
                 await context.bot.send_photo(chat_id=int(ADMIN_CHAT_ID), photo=f, caption=caption)
 
-        # Confirm to user (NO image returned)
         await update.message.reply_text(RECEIVED_TEXT)
 
-        # Cleanup
         try:
             os.remove(in_path)
             os.remove(out_path)
@@ -271,7 +241,7 @@ async def handle_other(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        raise SystemExit("BOT_TOKEN ناقص. ضيفه في Environment Variables (Railway/Render).")
+        raise SystemExit("BOT_TOKEN ناقص. ضيفه في Environment Variables.")
 
     if not os.path.exists(TEMPLATE_PATH):
         raise SystemExit(f"القالب ناقص: {TEMPLATE_PATH}")
@@ -292,5 +262,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
