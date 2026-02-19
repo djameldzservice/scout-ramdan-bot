@@ -260,7 +260,7 @@ async def handle_other(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        raise SystemExit("BOT_TOKEN ناقص. ضيفه في Render Environment Variables.")
+        raise SystemExit("BOT_TOKEN ناقص. ضيفه في Environment Variables (Railway/Render).")
     if not os.path.exists(TEMPLATE_PATH):
         raise SystemExit(f"القالب ناقص: {TEMPLATE_PATH}")
     if not os.path.exists(FONT_PATH):
@@ -280,5 +280,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
